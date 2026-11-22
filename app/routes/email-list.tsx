@@ -27,7 +27,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
+import ContactAvatar from "~/components/ContactAvatar";
 import MailboxSplitView from "~/components/MailboxSplitView";
+import { parseParticipants } from "~/lib/contacts";
 import { getSnippetText } from "~/lib/utils";
 import {
 	useDeleteEmail,
@@ -278,16 +280,14 @@ export default function EmailListRoute() {
 		}
 	};
 
+	/** Names (not address prefixes) of everyone in the conversation. */
+	const getPeople = (email: Email) =>
+		parseParticipants(email.participants, email.sender, email.sender_name);
+
 	const formatParticipants = (email: Email): string => {
-		if (email.participants) {
-			const names = email.participants
-				.split(",")
-				.map((p) => p.trim().split("@")[0])
-				.filter((name, idx, arr) => arr.indexOf(name) === idx);
-			if (names.length <= 3) return names.join(", ");
-			return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
-		}
-		return email.sender.split("@")[0];
+		const names = getPeople(email).map((p) => p.label);
+		if (names.length <= 3) return names.join(", ");
+		return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
 	};
 
 	return (
@@ -381,6 +381,13 @@ export default function EmailListRoute() {
 											/>
 										</button>
 
+										{/* Avatar of the latest sender */}
+										<ContactAvatar
+											label={getPeople(email)[0]?.label ?? email.sender}
+											email={getPeople(email)[0]?.email ?? email.sender}
+											size={36}
+										/>
+
 										{/* Content */}
 										<div className="min-w-0 flex-1">
 											<div className="flex items-center gap-2">
@@ -389,6 +396,11 @@ export default function EmailListRoute() {
 												>
 													{formatParticipants(email)}
 												</span>
+												{getPeople(email).length === 1 && getPeople(email)[0].domain && (
+													<span className="hidden sm:inline truncate text-xs text-kumo-subtle">
+														{getPeople(email)[0].domain}
+													</span>
+												)}
 												{(email.thread_count ?? 1) > 1 && (
 													<span className="shrink-0 text-xs text-kumo-subtle bg-kumo-fill rounded-full px-1.5 py-0.5 font-medium">
 														{email.thread_count}

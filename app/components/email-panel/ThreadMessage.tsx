@@ -11,6 +11,8 @@ import {
 	PencilSimpleIcon,
 	TrashIcon,
 } from "@phosphor-icons/react";
+import ContactAvatar from "~/components/ContactAvatar";
+import { parseAddress } from "~/lib/contacts";
 import EmailAttachmentList from "~/components/EmailAttachmentList";
 import EmailIframe from "~/components/EmailIframe";
 import {
@@ -37,7 +39,10 @@ interface ThreadMessageProps {
 	onPreviewImage?: (url: string, filename: string) => void;
 }
 
-function Avatar({ isDraft, isSelf, sender }: { isDraft?: boolean; isSelf: boolean; sender: string }) {
+function Avatar({ isDraft, isSelf, sender, name }: { isDraft?: boolean; isSelf: boolean; sender: string; name?: string | null }) {
+	if (!isDraft && !isSelf) {
+		return <ContactAvatar label={parseAddress(sender, name).label} email={sender} size={32} />;
+	}
 	return (
 		<div
 			className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
@@ -69,8 +74,13 @@ export default function ThreadMessage({
 	onPreviewImage,
 }: ThreadMessageProps) {
 	const isSelf = email.sender === mailboxEmail;
-	const containerClassName = `${!isLast ? "border-b border-kumo-line" : ""} ${isDraft ? "border-l-2 border-l-kumo-warning bg-kumo-warning/[0.02]" : ""}`;
-	const senderLabel = isDraft ? "Draft reply" : isSelf ? "You" : email.sender;
+	const containerClassName = `${!isLast ? "border-b border-kumo-line" : ""} ${isDraft ? "border-l-2 border-l-kumo-warning" : isSelf ? "border-l-2 border-l-kumo-brand/40" : ""}`;
+	// Our own messages get a "You" pill so the back-and-forth reads at a glance.
+	const senderLabelClass =
+		isSelf && !isDraft
+			? "rounded-full bg-kumo-brand/10 px-2 py-0.5 text-xs font-semibold text-kumo-link"
+			: "text-sm font-medium text-kumo-default truncate";
+	const senderLabel = isDraft ? "Draft reply" : isSelf ? "You" : parseAddress(email.sender, email.sender_name).label;
 
 	if (!isExpanded) {
 		return (
@@ -78,12 +88,12 @@ export default function ThreadMessage({
 				<button
 					type="button"
 					onClick={onToggleExpand}
-					className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kumo-tint rounded-lg text-left"
+					className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kumo-tint rounded-lg text-left border border-transparent hover:border-kumo-line transition-colors"
 				>
-					<Avatar isDraft={isDraft} isSelf={isSelf} sender={email.sender} />
+					<Avatar isDraft={isDraft} isSelf={isSelf} sender={email.sender} name={email.sender_name} />
 					<div className="flex-1 min-w-0">
 						<div className="flex items-center justify-between">
-							<span className="text-sm font-medium text-kumo-default truncate">
+							<span title={isSelf || isDraft ? undefined : email.sender} className={senderLabelClass}>
 								{senderLabel}
 							</span>
 							<span className="text-xs text-kumo-subtle shrink-0">
@@ -112,14 +122,15 @@ export default function ThreadMessage({
 							aria-label="Collapse message"
 						>
 							<div className="cursor-pointer hover:ring-2 hover:ring-kumo-brand/30 transition-shadow rounded-full">
-								<Avatar isDraft={isDraft} isSelf={isSelf} sender={email.sender} />
+								<Avatar isDraft={isDraft} isSelf={isSelf} sender={email.sender} name={email.sender_name} />
 							</div>
 						</button>
 						<div className="min-w-0">
 							<div className="flex items-center gap-2">
-								<span className="text-sm font-medium text-kumo-default truncate">
+								<span className={senderLabelClass}>
 									{senderLabel}
 								</span>
+								{!isDraft && !isSelf && (<span className="hidden sm:inline text-xs text-kumo-subtle truncate">{email.sender}</span>)}
 								{isDraft && <Badge variant="outline">Draft</Badge>}
 							</div>
 							<div className="text-xs text-kumo-subtle">To: {email.recipient}</div>

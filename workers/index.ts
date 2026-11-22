@@ -7,6 +7,7 @@ import { cors } from "hono/cors";
 import PostalMime from "postal-mime";
 import { z } from "zod";
 import { sendEmail } from "./email-sender";
+import { rewriteDraft, type RewriteMode } from "./lib/ai";
 import { storeAttachments, type StoredAttachment } from "./lib/attachments";
 import {
 	validateSender,
@@ -157,11 +158,13 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const limit = intQuery(c, "limit");
 	const sortColumn = c.req.query("sortColumn") as any;
 	const sortDirection = c.req.query("sortDirection") as "ASC" | "DESC" | undefined;
+	const filterParam = c.req.query("filter");
+	const filter = filterParam === "unread" || filterParam === "starred" ? filterParam : undefined;
 	const stub = c.var.mailboxStub;
 
 	if (threaded && folder) {
-		const emails = await (stub as any).getThreadedEmails({ folder, page, limit });
-		const totalCount = await (stub as any).countThreadedEmails(folder);
+		const emails = await (stub as any).getThreadedEmails({ folder, page, limit, filter });
+		const totalCount = await (stub as any).countThreadedEmails(folder, filter);
 		return c.json({ emails, totalCount });
 	}
 	const emails = await stub.getEmails({ folder, thread_id, page, limit, sortColumn, sortDirection });
@@ -242,6 +245,15 @@ app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 	return c.json({ id: messageId, status: "draft", subject: subject || "", recipient: to || "", date: now }, 201);
 });
 
+app.get("/api/v1/mailboxes/:mailboxId/emails/:id/conversation", async (c: AppContext) => {
+	return c.json(await (c.var.mailboxStub as any).getConversationEmails(c.req.param("id")!));
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/conversation/read", async (c: AppContext) => {
+	await (c.var.mailboxStub as any).markConversationRead(c.req.param("id")!);
+	return c.json({ status: "marked_read" });
+});
+
 app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	const email = await c.var.mailboxStub.getEmail(c.req.param("id")!);
 	if (!email) return c.json({ error: "Email not found" }, 404);
@@ -270,6 +282,26 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
 });
 
+// -- Conversation actions -------------------------------------------
+
+const CONVERSATION_ACTIONS = new Set(["archive", "trash", "move", "delete", "read", "unread", "star", "unstar", "move_messages"]);
+
+/** Apply an action (archive, trash, move, delete, read, unread, star, unstar) to whole conversations. */
+app.post("/api/v1/mailboxes/:mailboxId/conversations/action", async (c: AppContext) => {
+	const body = await c.req.json().catch(() => ({})) as { emailIds?: string[]; action?: string; folderId?: string };
+	if (!Array.isArray(body.emailIds) || body.emailIds.length === 0 || body.emailIds.length > 200 || body.emailIds.some((id) => typeof id !== "string")) {
+		return c.json({ error: "emailIds must be a list of 1-200 ids" }, 400);
+	}
+	if (!body.action || !CONVERSATION_ACTIONS.has(body.action)) return c.json({ error: "Unknown action" }, 400);
+	if ((body.action === "move" || body.action === "move_messages") && !body.folderId) return c.json({ error: "folderId is required" }, 400);
+
+	const result = await (c.var.mailboxStub as any).applyConversationAction(body.emailIds, body.action, body.folderId);
+	if (result.removedAttachments.length > 0) {
+		await c.env.BUCKET.delete(result.removedAttachments.map((a: any) => `attachments/${a.emailId}/${a.id}/${a.filename}`));
+	}
+	return c.json({ affected: result.affected, originalFolder: result.originalFolder });
+});
+
 // -- Threads --------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId", async (c: AppContext) => {
@@ -289,6 +321,20 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
 // -- Folders --------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(await c.var.mailboxStub.getFolders()));
+
+app.post("/api/v1/mailboxes/:mailboxId/folders/:id/read-all", async (c: AppContext) => {
+	await (c.var.mailboxStub as any).markFolderRead(c.req.param("id")!);
+	return c.json({ status: "marked_read" });
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/folders/:id/empty", async (c: AppContext) => {
+	const result = await (c.var.mailboxStub as any).emptyFolder(c.req.param("id")!);
+	if (!result) return c.json({ error: "Only Trash and Spam can be emptied" }, 400);
+	if (result.removedAttachments.length > 0) {
+		await c.env.BUCKET.delete(result.removedAttachments.map((a: any) => `attachments/${a.emailId}/${a.id}/${a.filename}`));
+	}
+	return c.json({ deleted: result.deleted });
+});
 
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };
@@ -313,7 +359,7 @@ app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => 
 
 app.get("/api/v1/mailboxes/:mailboxId/search", async (c: AppContext) => {
 	const searchOpts: Record<string, unknown> = {
-		query: c.req.query("query") || "", folder: c.req.query("folder"), from: c.req.query("from"),
+		query: c.req.query("query") || "", folder: c.req.query("folder"), from: c.req.query("from"), contact: c.req.query("contact"),
 		to: c.req.query("to"), subject: c.req.query("subject"), date_start: c.req.query("date_start"),
 		date_end: c.req.query("date_end"), is_read: boolQuery(c, "is_read"),
 		is_starred: boolQuery(c, "is_starred"), has_attachment: boolQuery(c, "has_attachment"),
@@ -322,6 +368,41 @@ app.get("/api/v1/mailboxes/:mailboxId/search", async (c: AppContext) => {
 	const emails = await stub.searchEmails({ ...searchOpts, page: intQuery(c, "page"), limit: intQuery(c, "limit") });
 	const totalCount = await stub.countSearchResults(searchOpts);
 	return c.json({ emails, totalCount });
+});
+
+// -- AI compose helpers ----------------------------------------------
+
+const REWRITE_MODES = new Set<RewriteMode>(["polish", "friendly", "shorter"]);
+
+app.post("/api/v1/mailboxes/:mailboxId/ai/rewrite", async (c: AppContext) => {
+	const input = await c.req.json().catch(() => ({})) as { body?: string; mode?: RewriteMode };
+	if (typeof input.body !== "string" || !input.body.trim()) return c.json({ error: "body is required" }, 400);
+	if (input.body.length > 100_000) return c.json({ error: "body is too large" }, 413);
+	if (!input.mode || !REWRITE_MODES.has(input.mode)) return c.json({ error: "Unknown mode" }, 400);
+	try {
+		return c.json(await rewriteDraft(c.env.AI, input.body, input.mode));
+	} catch (err) {
+		console.error("AI rewrite failed:", (err as Error).message);
+		return c.json({ error: "The AI service is unavailable right now. Please try again." }, 502);
+	}
+});
+
+// -- Contacts -------------------------------------------------------
+
+app.post("/api/v1/mailboxes/:mailboxId/contacts/merge", async (c: AppContext) => {
+	const body = await c.req.json().catch(() => ({})) as { email?: string; into?: string };
+	if (!body.email || !body.into) return c.json({ error: "email and into are required" }, 400);
+	const ok = await (c.var.mailboxStub as any).mergeContact(body.email, body.into);
+	return ok ? c.json({ status: "merged" }) : c.json({ error: "Addresses already belong to the same contact" }, 400);
+});
+
+app.delete("/api/v1/mailboxes/:mailboxId/contacts/aliases/:email", async (c: AppContext) => {
+	const ok = await (c.var.mailboxStub as any).unmergeContact(c.req.param("email")!);
+	return ok ? c.json({ status: "unmerged" }) : c.json({ error: "Alias not found" }, 404);
+});
+
+app.get("/api/v1/mailboxes/:mailboxId/contacts/:email", async (c: AppContext) => {
+	return c.json(await (c.var.mailboxStub as any).getContact(c.req.param("email")!));
 });
 
 // -- Attachments ----------------------------------------------------
@@ -409,7 +490,7 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 
 	await stub.createEmail(Folders.INBOX, {
 		id: messageId, subject: parsedEmail.subject || "",
-		sender: (parsedEmail.from?.address || "").toLowerCase(), recipient: allRecipients.join(", "),
+		sender: (parsedEmail.from?.address || "").toLowerCase(), sender_name: parsedEmail.from?.name?.trim() || null, recipient: allRecipients.join(", "),
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
 		body: parsedEmail.html || parsedEmail.text || "",

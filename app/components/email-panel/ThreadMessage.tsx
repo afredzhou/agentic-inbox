@@ -88,7 +88,7 @@ export default function ThreadMessage({
 					<Avatar isDraft={isDraft} isSelf={isSelf} sender={email.sender} name={email.sender_name} />
 					<div className="flex-1 min-w-0">
 						<div className="flex items-center justify-between">
-							<span className="text-sm font-medium text-kumo-default truncate">
+							<span title={isSelf || isDraft ? undefined : email.sender} className="text-sm font-medium text-kumo-default truncate">
 								{senderLabel}
 							</span>
 							<span className="text-xs text-kumo-subtle shrink-0">
@@ -125,6 +125,7 @@ export default function ThreadMessage({
 								<span className="text-sm font-medium text-kumo-default truncate">
 									{senderLabel}
 								</span>
+								{!isDraft && !isSelf && (<span className="hidden sm:inline text-xs text-kumo-subtle truncate">{email.sender}</span>)}
 								{isDraft && <Badge variant="outline">Draft</Badge>}
 							</div>
 							<div className="text-xs text-kumo-subtle">To: {email.recipient}</div>

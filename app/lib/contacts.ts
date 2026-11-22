@@ -98,3 +98,63 @@ export function getAvatarColor(key: string): { background: string; color: string
 		color: `hsl(${hue} 55% 28%)`,
 	};
 }
+
+export interface RowPeople {
+	/** Everyone except this mailbox (recipients for outgoing folders). */
+	people: ParsedAddress[];
+	/** The person to show the avatar for. */
+	primary: ParsedAddress;
+	/** Ready-to-render label, e.g. "Jane, Bob +2" or "To: Jane" or "You". */
+	label: string;
+	/** True when this mailbox itself took part (shown as "You"). */
+	includesSelf: boolean;
+	/** Tooltip text listing every full address. */
+	title: string;
+}
+
+/**
+ * Who a list row is "about". Incoming folders show the other people (this
+ * mailbox is dropped, or shown as "You" when it replied); Sent/Drafts show
+ * the recipients instead of the mailbox's own address.
+ */
+export function getRowPeople(
+	email: {
+		sender: string;
+		sender_name?: string | null;
+		participants?: string;
+		recipient?: string;
+	},
+	mailboxEmail: string | undefined,
+	outgoing: boolean,
+): RowPeople {
+	const self = mailboxEmail?.toLowerCase();
+	const all = outgoing
+		? (email.recipient || "")
+				.split(",")
+				.map((r) => r.trim())
+				.filter(Boolean)
+				.map((r) => parseAddress(r))
+		: parseParticipants(email.participants, email.sender, email.sender_name);
+
+	const includesSelf = !!self && all.some((p) => p.email === self);
+	const people = all.filter((p) => p.email && p.email !== self);
+
+	const names = people.map((p) => p.label);
+	if (!outgoing && includesSelf && names.length > 0) names.push("You");
+
+	let text: string;
+	if (names.length === 0) text = "You";
+	else if (names.length <= 3) text = names.join(", ");
+	else text = `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+
+	const primary =
+		people[0] ?? parseAddress(email.sender || self || "", email.sender_name);
+
+	return {
+		people,
+		primary,
+		label: outgoing && people.length > 0 ? `To: ${text}` : text,
+		includesSelf,
+		title: people.map((p) => (p.name ? `${p.name} <${p.email}>` : p.email)).join("\n"),
+	};
+}

@@ -29,7 +29,7 @@ import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
 import ContactAvatar from "~/components/ContactAvatar";
 import MailboxSplitView from "~/components/MailboxSplitView";
-import { parseParticipants } from "~/lib/contacts";
+import { getRowPeople } from "~/lib/contacts";
 import { getSnippetText } from "~/lib/utils";
 import {
 	useDeleteEmail,
@@ -38,6 +38,7 @@ import {
 	useUpdateEmail,
 } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
+import { useMailbox } from "~/queries/mailboxes";
 import { queryKeys } from "~/queries/keys";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { Email } from "~/types";
@@ -187,6 +188,8 @@ export default function EmailListRoute() {
 	const totalCount = emailData?.totalCount ?? 0;
 
 	const { data: folders = [] } = useFolders(mailboxId);
+	const { data: mailbox } = useMailbox(mailboxId);
+	const isOutgoingFolder = folder === Folders.SENT || folder === Folders.DRAFT;
 
 	const folderName = useMemo(() => {
 		const found = folders.find((f) => f.id === folder);
@@ -280,15 +283,9 @@ export default function EmailListRoute() {
 		}
 	};
 
-	/** Names (not address prefixes) of everyone in the conversation. */
-	const getPeople = (email: Email) =>
-		parseParticipants(email.participants, email.sender, email.sender_name);
-
-	const formatParticipants = (email: Email): string => {
-		const names = getPeople(email).map((p) => p.label);
-		if (names.length <= 3) return names.join(", ");
-		return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
-	};
+	/** Who this row is about: other people (or recipients in Sent/Drafts). */
+	const getRow = (email: Email) =>
+		getRowPeople(email, mailbox?.email, isOutgoingFolder);
 
 	return (
 		<MailboxSplitView
@@ -383,8 +380,8 @@ export default function EmailListRoute() {
 
 										{/* Avatar of the latest sender */}
 										<ContactAvatar
-											label={getPeople(email)[0]?.label ?? email.sender}
-											email={getPeople(email)[0]?.email ?? email.sender}
+											label={getRow(email).primary.label}
+											email={getRow(email).primary.email}
 											size={36}
 										/>
 
@@ -392,13 +389,14 @@ export default function EmailListRoute() {
 										<div className="min-w-0 flex-1">
 											<div className="flex items-center gap-2">
 												<span
+													title={getRow(email).title}
 													className={`truncate text-sm shrink-0 max-w-[70%] ${hasUnread(email) ? "font-semibold text-kumo-default" : "text-kumo-strong"}`}
 												>
-													{formatParticipants(email)}
+													{getRow(email).label}
 												</span>
-												{getPeople(email).length === 1 && getPeople(email)[0].domain && (
+												{getRow(email).people.length === 1 && getRow(email).people[0].domain && (
 													<span className="hidden sm:inline min-w-0 truncate text-xs text-kumo-subtle">
-														{getPeople(email)[0].domain}
+														{getRow(email).people[0].domain}
 													</span>
 												)}
 												{(email.thread_count ?? 1) > 1 && (

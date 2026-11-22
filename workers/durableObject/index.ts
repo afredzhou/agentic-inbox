@@ -864,7 +864,8 @@ export class MailboxDO extends DurableObject<Env> {
 		const conversations = [
 			...this.ctx.storage.sql.exec(
 				`WITH m AS (
-					SELECT id, subject, date, read, folder_id, COALESCE(thread_id, id) AS tkey
+					SELECT id, subject, date, read, folder_id, COALESCE(thread_id, id) AS tkey,
+						SUBSTR(body, 1, 300) AS snippet
 					FROM emails WHERE folder_id != ? AND ${involved}
 				), latest AS (
 					SELECT *,
@@ -873,7 +874,7 @@ export class MailboxDO extends DurableObject<Env> {
 						SUM(CASE WHEN read = 0 THEN 1 ELSE 0 END) OVER (PARTITION BY tkey) AS unread_count
 					FROM m
 				)
-				SELECT id, subject, date, folder_id, message_count, unread_count
+				SELECT id, subject, date, folder_id, snippet, message_count, unread_count
 				FROM latest WHERE rn = 1 ORDER BY date DESC LIMIT 50`,
 				Folders.TRASH,
 				...involvedParams,

@@ -392,12 +392,12 @@ export default function EmailListRoute() {
 										<div className="min-w-0 flex-1">
 											<div className="flex items-center gap-2">
 												<span
-													className={`truncate text-sm ${hasUnread(email) ? "font-semibold text-kumo-default" : "text-kumo-strong"}`}
+													className={`truncate text-sm shrink-0 max-w-[70%] ${hasUnread(email) ? "font-semibold text-kumo-default" : "text-kumo-strong"}`}
 												>
 													{formatParticipants(email)}
 												</span>
 												{getPeople(email).length === 1 && getPeople(email)[0].domain && (
-													<span className="hidden sm:inline truncate text-xs text-kumo-subtle">
+													<span className="hidden sm:inline min-w-0 truncate text-xs text-kumo-subtle">
 														{getPeople(email)[0].domain}
 													</span>
 												)}

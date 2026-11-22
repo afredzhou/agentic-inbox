@@ -71,6 +71,7 @@ export interface ContactConversation {
 	subject: string;
 	date: string;
 	folder_id: string;
+	snippet?: string | null;
 	message_count: number;
 	unread_count: number;
 }
